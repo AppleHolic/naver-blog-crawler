@@ -14,8 +14,9 @@ import paramiko
 import requests
 
 import blog_text_crawler as btc
-from settings import DATADIR, ENCODING, REMOTE, SLEEP, QUERIES
+from settings import DATADIR, ENCODING, REMOTE, SLEEP, QUERIES, MONGODB
 import utils
+import mongodb_controller
 
 
 listurl = 'http://section.blog.naver.com/sub/SearchBlog.nhn?type=post&option.keyword=%s&term=&option.startDate=%s&option.endDate=%s&option.page.currentPage=%s&option.orderBy=date'
@@ -100,7 +101,7 @@ def get_dates(sdate, edate):
             for i in range(delta.days + 1)]
 
 
-def crawl_blog_posts_for_query_per_date(query, date):
+def crawl_blog_posts_for_query_per_date(query, date, db_pool=None):
 
     def get_keys_from_page(query, date, pagenum):
         root = html.parse(listurl % (query, date, date, pagenum))
@@ -113,13 +114,13 @@ def crawl_blog_posts_for_query_per_date(query, date):
 
         return {(b, l): t for b, l, t in zip(blog_ids, log_nos, times)}
 
-
-    # make directories
-    subdir = '/'.join([DATADIR, query, date.split('-')[0]])
-    utils.checkdir(subdir)
-    if REMOTE:
-        rsubdir = '/'.join([REMOTE['dir'], query, date.split('-')[0]])
-        utils.rcheckdir(sftp, rsubdir)
+    if db_pool is None:
+        # make directories
+        subdir = '/'.join([DATADIR, query, date.split('-')[0]])
+        utils.checkdir(subdir)
+        if REMOTE:
+            rsubdir = '/'.join([REMOTE['dir'], query, date.split('-')[0]])
+            utils.rcheckdir(sftp, rsubdir)
 
     # check number of items
     try:
@@ -135,11 +136,14 @@ def crawl_blog_posts_for_query_per_date(query, date):
         for (blog_id, log_no), written_time in keys.items():
             try:
                 info = crawl_blog_post(blog_id, log_no, tags, written_time, verbose=False)
-                localpath = '%s/%s.json' % (subdir, log_no)
-                utils.write_json(info, localpath)
-                if REMOTE:
-                    remotepath = '%s/%s.json' % (rsubdir, log_no)
-                    sftp.put(localpath, remotepath)
+                if db_pool is None:
+                    localpath = '%s/%s.json' % (subdir, log_no)
+                    utils.write_json(info, localpath)
+                    if REMOTE:
+                        remotepath = '%s/%s.json' % (rsubdir, log_no)
+                        sftp.put(localpath, remotepath)
+                else:
+                    db_pool.insert_blog_to_db(info)
             except IndexError:
                 print Exception(\
                     'Crawl failed for http://blog.naver.com/%s/%s' % (blog_id, log_no))
@@ -192,6 +196,7 @@ if __name__=='__main__':
         print 'Trial:', trial
         try:
             if REMOTE: ssh, sftp = open_ssh()
+            if MONGODB: db_pool = mongodb_controller.Pool()
 
             qdset = []
             for line in [line.split()[:3] for line in read_lines(QUERIES)]:
@@ -199,7 +204,7 @@ if __name__=='__main__':
                 qdset.extend([query, d] for d in get_dates(sdate, edate))
 
             for q, d in qdset:
-                crawl_blog_posts_for_query_per_date(q, d)
+                crawl_blog_posts_for_query_per_date(q, d, db_pool=db_pool)
 
             if REMOTE: close_ssh(ssh, sftp)
         except Exception as e:
