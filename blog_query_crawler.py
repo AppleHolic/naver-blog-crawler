@@ -197,6 +197,7 @@ if __name__=='__main__':
         try:
             if REMOTE: ssh, sftp = open_ssh()
             if MONGODB: db_pool = mongodb_controller.Pool()
+            else: db_pool = None
 
             qdset = []
             for line in [line.split()[:3] for line in read_lines(QUERIES)]:
