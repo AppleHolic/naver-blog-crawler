@@ -30,7 +30,19 @@ def make_structure(blog_id, log_no, raw, doc, crawled_time, crawler_version,
                                     encoding='utf-8'):
 
     extract_crawlerTime  = get_today_str()
-    extract_category     = lambda doc: doc.find("a", {"class": "_categoryName"}).get_text().encode(encoding)
+    #extract_category     = lambda doc: doc.find("a", {"class": "_categoryName"}).get_text().encode(encoding)
+    def extract_category(doc):
+        doc_node = None
+        try:
+            doc_node = doc.find("a", {"class": "_categoryName"})
+        except Exception:
+            pass
+        if doc_node == None:
+            doc_node = doc.find("a", {"id": "_categoryName"})
+        if doc_node == None:
+            return ''
+        else:
+            return doc_node.get_text().encode(encoding)
     extract_content_html = lambda doc: doc.find("div", {"id": "viewTypeSelector"})
 
     def extract_sympathycount(doc):

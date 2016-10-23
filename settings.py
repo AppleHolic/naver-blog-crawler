@@ -24,11 +24,11 @@ REMOTE = None
 MongoDB Setting,
 If you do not want to use mongodb, MONGODB = None
 '''
-MONGODB = None
-#MONGODB = {
-#    'MAX_POOL_SIZE' : 50,
-#    'port' : 27340,
-#    'host' : 'mongodb://localhost',
-#    'db' : 'test',
-#    'collection' : 'articles'
-#}
+#MONGODB = None
+MONGODB = {
+    'MAX_POOL_SIZE' : 50,
+    'port' : 27340,
+    'host' : 'mongodb://localhost',
+    'db' : 'test',
+    'collection' : 'articles'
+}

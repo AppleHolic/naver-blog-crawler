@@ -23,6 +23,8 @@ listurl = 'http://section.blog.naver.com/sub/SearchBlog.nhn?type=post&option.key
 tagsurl = 'http://section.blog.naver.com/TagSearchAsync.nhn?variables=[%s]'
 posturl = 'http://blog.naver.com/%s/%s'
 mobileurl = 'http://m.blog.naver.com/%s/%s'
+headers = {'User-Agent': 'Mozilla/17.0'}
+PROCESS_POOL_NUMBER = 6
 
 
 def requests_get(url):
@@ -53,29 +55,43 @@ def get_tags_for_items(item_keys):
 def crawl_blog_post(blog_id, log_no, tags, written_time=None, verbose=True):
 
     def get_title(root):
-        return root.xpath('//h3[@class="tit_h3"]/text()')[0].strip()
+        result = ''
+        try:
+            result = root.xpath('//h3[@class="tit_h3"]/text()')[0].strip()
+        except Exception:
+            pass
+        if result != '':
+            return result
+
+        try:
+            result = root.xpath('//h3[@class="se_textarea"]/text()')[0].strip()
+        except Exception:
+            pass
+        #return root.xpath('//h3[@class="tit_h3"]/text()')[0].strip()
+        return result
 
     def get_page_html(url):
         try:
-            root = html.parse(url)
+            page = requests.get(url, headers=headers)
+            root = html.fromstring(page.content)
             elem = root.xpath('//div[@class="_postView"]')[0]
             html_ = etree.tostring(elem)
-            return (BeautifulSoup(html_), get_title(root))
+            return (BeautifulSoup(html_, 'lxml'), get_title(root))
         except IOError:
             print ''
             return (None, None)
 
-    if blog_id.startswith('http'):
-        url = blog_id
-    else:
-        url = mobileurl % (blog_id, log_no)
+    #if blog_id.startswith('http'):
+    #    url = blog_id
+    #else:
+    url = mobileurl % (blog_id, log_no)
 
     (doc, title)    = get_page_html(url)
 
     if doc:
         crawled_time    = utils.get_today_str()
         crawler_version = utils.get_version()
-        url             = posturl % (blog_id, log_no)
+        #url             = posturl % (blog_id, log_no)
         post_tags       = tags[(blog_id, log_no)]
         directory_seq   = None  # NOTE: No directory sequence given for query crawler
 
@@ -135,7 +151,8 @@ def crawl_blog_posts_for_query_per_date(query, date, db_pool=None):
         tags = get_tags_for_items(keys)
         for (blog_id, log_no), written_time in keys.items():
             try:
-                info = crawl_blog_post(blog_id, log_no, tags, written_time, verbose=False)
+                info = crawl_blog_post(blog_id, log_no, tags, written_time, verbose=False) # crawl contents
+                info['query'] = query # add quert info
                 if db_pool is None:
                     localpath = '%s/%s.json' % (subdir, log_no)
                     utils.write_json(info, localpath)
@@ -144,14 +161,17 @@ def crawl_blog_posts_for_query_per_date(query, date, db_pool=None):
                         sftp.put(localpath, remotepath)
                 else:
                     db_pool.insert_blog_to_db(info)
-            except IndexError:
+            #except IndexError:
+            except Exception, e:
                 print Exception(\
-                    'Crawl failed for http://blog.naver.com/%s/%s' % (blog_id, log_no))
+                    'Crawl failed for http://m.blog.naver.com/%s/%s' % (blog_id, log_no))
+                print e.message
 
             time.sleep(SLEEP)
 
-    overwrite_queries(query, date)
+    #overwrite_queries(query, date)
     print query, date, nitems
+    return '%s %s %d' % (query, date, nitems)
 
 
 def read_lines(filename):
@@ -166,7 +186,7 @@ def write_lines(lines, filename):
 
 def overwrite_queries(query, date):
     lines = read_lines(QUERIES)
-    queries = [line.split()[2] for line in lines]
+    queries = [' '.join(line.split()[2:]) for line in lines]
     index = queries.index(query)
     lines[index] = '%s %s' % (date, lines[index].split(' ', 1)[-1])
     write_lines(lines, QUERIES)
@@ -188,9 +208,36 @@ def close_ssh(ssh, sftp):
     sftp.close()
     ssh.close()
 
+def do_with_multi_processor(query_date_set, db_pool):
+    from multiprocessing import Process
+    
+    complete_logs = []
+    #for query, date in query_date_set:
+    for idx in range(0, len(query_date_set), PROCESS_POOL_NUMBER):
+        #pool = Pool(processes=PROCESS_POOL_NUMBER)
+        ##r = pool.map(crawl_blog_posts_for_query_per_date, args=args[idx:idx+PROCESS_POOL_NUMBER])
+        #complete_logs.extend(r)
+        #pool.close()
+        #pool.join()
+        processs = []
+        target_qdset = query_date_set[idx:idx+PROCESS_POOL_NUMBER]
+        last_query, last_date = target_qdset[-1]
+        for query, date in target_qdset:
+            p = Process(target=crawl_blog_posts_for_query_per_date, args=(query, date, db_pool))
+            p.start()
+            processs.append(p)
 
-if __name__=='__main__':
+        for p in processs:
+            p.join()
+        overwrite_queries(last_query, last_date)
 
+    return complete_logs
+
+def write_log_to_file(logs):
+    with open('./crawl_log.txt', 'w') as w:
+        w.write('\n'.join(logs))
+        
+def main():
     trial = 1
     while 1:
         print 'Trial:', trial
@@ -199,16 +246,23 @@ if __name__=='__main__':
             if MONGODB: db_pool = mongodb_controller.Pool()
             else: db_pool = None
 
+            # make query set
             qdset = []
-            for line in [line.split()[:3] for line in read_lines(QUERIES)]:
-                sdate, edate, query = line
+            for line in [line.split() for line in read_lines(QUERIES)]:
+                sdate, edate = line[0], line[1]
+                query = ' '.join(line[2:])
                 qdset.extend([query, d] for d in get_dates(sdate, edate))
 
-            for q, d in qdset:
-                crawl_blog_posts_for_query_per_date(q, d, db_pool=db_pool)
+            # crawl web pages with multiprocessing
+            logs = do_with_multi_processor(qdset, db_pool)
+            write_log_to_file(logs)
 
             if REMOTE: close_ssh(ssh, sftp)
+            break
         except Exception as e:
             print e
             trial += 1
     print 'Done.'
+
+if __name__=='__main__':
+    main()
