@@ -120,7 +120,8 @@ def get_dates(sdate, edate):
 def crawl_blog_posts_for_query_per_date(query, date, db_pool=None):
 
     def get_keys_from_page(query, date, pagenum):
-        root = html.parse(listurl % (query, date, date, pagenum))
+        url = listurl % (query, date, date, pagenum)
+        root = html.parse(url)
         items = root.xpath('//ul[@class="list_type_1 search_list"]')[0]
 
         blog_ids = items.xpath('./input[@name="blogId"]/@value')
@@ -142,7 +143,7 @@ def crawl_blog_posts_for_query_per_date(query, date, db_pool=None):
     try:
         nitems = get_nitems_for_query(query, date, date)
     except IndexError:
-        print query, date, 'None'
+        print '%s, %s, None' % (query, date)
         return
 
     # crawl items
@@ -170,7 +171,7 @@ def crawl_blog_posts_for_query_per_date(query, date, db_pool=None):
             time.sleep(SLEEP)
 
     #overwrite_queries(query, date)
-    print query, date, nitems
+    print '%s, %s, %d' % (query, date, nitems)
     return '%s %s %d' % (query, date, nitems)
 
 
@@ -219,16 +220,19 @@ def do_with_multi_processor(query_date_set, db_pool):
         #complete_logs.extend(r)
         #pool.close()
         #pool.join()
-        processs = []
+        processes = []
         target_qdset = query_date_set[idx:idx+PROCESS_POOL_NUMBER]
         last_query, last_date = target_qdset[-1]
         for query, date in target_qdset:
             p = Process(target=crawl_blog_posts_for_query_per_date, args=(query, date, db_pool))
             p.start()
-            processs.append(p)
+            processes.append(p)
 
-        for p in processs:
+        for p in processes:
             p.join()
+
+        for p in processes:
+            p.terminate()
         overwrite_queries(last_query, last_date)
 
     return complete_logs
